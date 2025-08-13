@@ -250,26 +250,11 @@ class TelegramBot:
             text = message.get('text', '')
             user = message.get('from', {})
             
-            # Verificar se é admin ou usuário com acesso
+            # Verificar se é admin
             if not self.is_admin(chat_id):
-                if self.user_manager:
-                    acesso_info = self.user_manager.verificar_acesso(chat_id)
-                    
-                    if not acesso_info['acesso']:
-                        motivo = acesso_info.get('motivo', 'acesso_negado')
-                        
-                        if motivo == 'usuario_nao_cadastrado':
-                            self.iniciar_cadastro_usuario(chat_id, user)
-                            return
-                        elif motivo in ['teste_expirado', 'plano_vencido', 'sem_plano_ativo']:
-                            self.solicitar_pagamento(chat_id, acesso_info.get('usuario'))
-                            return
-                        else:
-                            self.send_message(chat_id, "❌ Erro interno. Entre em contato com o suporte.")
-                            return
-                else:
-                    self.send_message(chat_id, "⚠️ Sistema em manutenção.")
-                    return
+                logger.warning(f"Acesso negado para chat_id: {chat_id}, ADMIN_CHAT_ID: {ADMIN_CHAT_ID}")
+                self.send_message(chat_id, "❌ Acesso negado. Apenas o admin pode usar este bot.")
+                return
             
             logger.info(f"Mensagem de {user.get('username', 'unknown')}: {text}")
             
@@ -1127,13 +1112,6 @@ Use os botões abaixo para navegar:
             
             elif callback_data == 'config_baileys_status':
                 self.config_baileys_status(chat_id)
-            
-            # Casos específicos de PIX primeiro
-            elif callback_data == 'edit_config_pix_chave':
-                self.iniciar_edicao_config(chat_id, 'empresa_pix', 'Chave PIX')
-                
-            elif callback_data == 'edit_config_pix_titular':
-                self.iniciar_edicao_config(chat_id, 'empresa_titular', 'Titular da Conta')
             
             elif callback_data.startswith('edit_config_'):
                 try:
@@ -4103,43 +4081,17 @@ Escolha o que deseja alterar:"""
             self.send_message(chat_id, "❌ Erro ao carregar dados da empresa.")
     
     def config_pix(self, chat_id):
-        """Configurações PIX com verificação de uso em templates"""
+        """Configurações PIX"""
         try:
             pix_empresa = self.db.obter_configuracao('empresa_pix', 'NÃO CONFIGURADO') if self.db else 'NÃO CONFIGURADO'
             titular_conta = self.db.obter_configuracao('empresa_titular', 'NÃO CONFIGURADO') if self.db else 'NÃO CONFIGURADO'
             
-            # Verificar templates que usam variáveis PIX
-            templates_pix = []
-            if self.template_manager:
-                try:
-                    todos_templates = self.template_manager.listar_templates()
-                    for template in todos_templates:
-                        conteudo = template.get('conteudo', '')
-                        if '{pix}' in conteudo or '{titular}' in conteudo:
-                            templates_pix.append(template['nome'])
-                except:
-                    pass
-            
-            # Mensagem base
             mensagem = f"""💳 *CONFIGURAÇÕES PIX*
 
 🔑 *Chave PIX atual:* {pix_empresa}
-👤 *Titular atual:* {titular_conta}"""
-            
-            # Adicionar informação sobre uso em templates
-            if templates_pix:
-                mensagem += f"""
+👤 *Titular atual:* {titular_conta}
 
-📄 *Usado em templates:* {len(templates_pix)}
-• {', '.join(templates_pix[:3])}"""
-                if len(templates_pix) > 3:
-                    mensagem += f" (+{len(templates_pix) - 3} outros)"
-            else:
-                mensagem += """
-
-💡 *Dica:* Use `{pix}` e `{titular}` nos templates para substituição automática"""
-            
-            mensagem += "\n\nEscolha o que deseja configurar:"
+Escolha o que deseja configurar:"""
             
             inline_keyboard = [
                 [
@@ -4251,23 +4203,11 @@ Digite o novo valor:"""
                 return
             
             # Validações específicas
-            if config_key == 'empresa_pix':
-                texto_limpo = texto.strip()
-                if len(texto_limpo) < 3:
-                    self.send_message(chat_id, "❌ Chave PIX muito curta. Digite um valor válido (CPF, CNPJ, telefone, email ou chave aleatória):")
-                    return
-                
-                # Validação básica de formato de PIX
-                if '@' not in texto_limpo and len(texto_limpo) < 11:
-                    self.send_message(chat_id, "❌ Formato de chave PIX inválido. Digite:\n• CPF/CNPJ (apenas números)\n• Email válido\n• Telefone (+5511999999999)\n• Chave aleatória:")
-                    return
+            if config_key in ['empresa_pix'] and len(texto.strip()) < 3:
+                self.send_message(chat_id, "❌ Chave PIX muito curta. Digite um valor válido:")
+                return
             
-            if config_key == 'empresa_titular':
-                if len(texto.strip()) < 3:
-                    self.send_message(chat_id, "❌ Nome do titular muito curto. Digite o nome completo:")
-                    return
-                    
-            if config_key in ['empresa_nome', 'empresa_telefone'] and len(texto.strip()) < 2:
+            if config_key in ['empresa_nome', 'empresa_titular'] and len(texto.strip()) < 2:
                 self.send_message(chat_id, "❌ Valor muito curto. Digite um valor válido:")
                 return
             

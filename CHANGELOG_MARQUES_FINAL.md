@@ -10,21 +10,6 @@
 - ✅ **Formato**: "🟢 João Silva (15/08/2025)" 
 - ✅ **Benefício**: Informação mais útil e prática para o usuário
 
-### 📱 **SISTEMA DE PERSISTÊNCIA WhatsApp OTIMIZADO**
-
-**Problema Resolvido:**
-- ❌ **Antes**: QR code necessário a cada deploy no Railway
-- ✅ **Agora**: Sessão WhatsApp persiste automaticamente no PostgreSQL
-
-**Implementação:**
-- ✅ **Backup automático**: A cada 2 minutos + updates de credenciais
-- ✅ **Restauração automática**: Ao iniciar servidor após deploy
-- ✅ **APIs dedicadas**: `/api/session/backup`, `/api/session/restore`, `/api/session/status`
-- ✅ **Logs detalhados**: Monitoramento completo do processo
-- ✅ **Zero downtime**: WhatsApp continua funcionando após deploys
-
-**Benefício:** Deploy no Railway sem necessidade de rescanear QR code!
-
 ### 🔧 **CORREÇÃO CRÍTICA: Reprocessamento Automático de Vencidos**
 
 **Problema Resolvido:**
