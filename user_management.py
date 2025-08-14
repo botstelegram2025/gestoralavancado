@@ -90,8 +90,12 @@ class UserManager:
             
             # Verificar se ainda está no período de teste
             if usuario['status'] == 'teste_gratuito':
-                if agora <= usuario['fim_periodo_teste']:
-                    dias_restantes = (usuario['fim_periodo_teste'] - agora).days
+                fim_periodo_teste = usuario['fim_periodo_teste']
+                if fim_periodo_teste.tzinfo is None:
+                    fim_periodo_teste = self.timezone_br.localize(fim_periodo_teste)
+                
+                if agora <= fim_periodo_teste:
+                    dias_restantes = (fim_periodo_teste - agora).days
                     return {
                         'acesso': True, 
                         'tipo': 'teste',
@@ -105,8 +109,13 @@ class UserManager:
             
             # Verificar se tem plano pago ativo
             if usuario['status'] == 'pago' and usuario['plano_ativo']:
-                if usuario['proximo_vencimento'] and agora <= usuario['proximo_vencimento']:
-                    dias_restantes = (usuario['proximo_vencimento'] - agora).days
+                if usuario['proximo_vencimento']:
+                    proximo_vencimento = usuario['proximo_vencimento']
+                    if proximo_vencimento.tzinfo is None:
+                        proximo_vencimento = self.timezone_br.localize(proximo_vencimento)
+                    
+                    if agora <= proximo_vencimento:
+                        dias_restantes = (proximo_vencimento - agora).days
                     return {
                         'acesso': True, 
                         'tipo': 'pago',
@@ -133,6 +142,39 @@ class UserManager:
             logger.info(f"Status do usuário {chat_id} atualizado para: {status}")
         except Exception as e:
             logger.error(f"Erro ao atualizar status do usuário: {e}")
+    
+    def atualizar_dados_usuario(self, chat_id, **kwargs):
+        """Atualiza dados pessoais do usuário (nome, email, telefone)"""
+        try:
+            # Campos permitidos para atualização
+            campos_permitidos = ['nome', 'email', 'telefone']
+            updates = []
+            valores = []
+            
+            for campo, valor in kwargs.items():
+                if campo in campos_permitidos and valor:
+                    updates.append(f"{campo} = %s")
+                    valores.append(valor)
+            
+            if not updates:
+                return {'success': False, 'message': 'Nenhum campo válido para atualização'}
+            
+            # Construir query
+            query = f"UPDATE usuarios SET {', '.join(updates)} WHERE chat_id = %s"
+            valores.append(chat_id)
+            
+            self.db.execute_query(query, valores)
+            
+            logger.info(f"Dados do usuário {chat_id} atualizados: {list(kwargs.keys())}")
+            
+            return {
+                'success': True,
+                'message': f"Dados atualizados com sucesso: {', '.join(kwargs.keys())}"
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro ao atualizar dados do usuário: {e}")
+            return {'success': False, 'message': 'Erro interno ao atualizar dados'}
     
     def processar_pagamento(self, chat_id, valor_pago, referencia_pagamento):
         """Processa pagamento aprovado e ativa plano mensal"""
@@ -231,3 +273,117 @@ class UserManager:
     def get_valor_mensal(self):
         """Retorna valor da mensalidade"""
         return self.valor_mensal
+    
+    def obter_estatisticas(self):
+        """Obtém estatísticas gerais do sistema"""
+        try:
+            agora = datetime.now(self.timezone_br)
+            
+            # Estatísticas de usuários
+            query_total = "SELECT COUNT(*) as total FROM usuarios"
+            total_usuarios = self.db.fetch_one(query_total)
+            
+            query_ativos = "SELECT COUNT(*) as total FROM usuarios WHERE status = 'pago' AND plano_ativo = true"
+            usuarios_ativos = self.db.fetch_one(query_ativos)
+            
+            query_teste = "SELECT COUNT(*) as total FROM usuarios WHERE status = 'teste_gratuito' AND plano_ativo = true"
+            usuarios_teste = self.db.fetch_one(query_teste)
+            
+            # Faturamento mensal estimado
+            query_faturamento = "SELECT SUM(%s) as total FROM usuarios WHERE status = 'pago' AND plano_ativo = true"
+            resultado_faturamento = self.db.fetch_one(query_faturamento, [self.valor_mensal])
+            
+            return {
+                'total_usuarios': total_usuarios['total'] if total_usuarios else 0,
+                'usuarios_ativos': usuarios_ativos['total'] if usuarios_ativos else 0,
+                'usuarios_teste': usuarios_teste['total'] if usuarios_teste else 0,
+                'faturamento_mensal': resultado_faturamento['total'] if resultado_faturamento and resultado_faturamento['total'] else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro ao obter estatísticas: {e}")
+            return {
+                'total_usuarios': 0,
+                'usuarios_ativos': 0,
+                'usuarios_teste': 0,
+                'faturamento_mensal': 0
+            }
+    
+    def obter_estatisticas_faturamento(self):
+        """Obtém estatísticas detalhadas de faturamento"""
+        try:
+            # Faturamento atual
+            query_faturamento_atual = """
+            SELECT COUNT(*) as usuarios_ativos, SUM(%s) as faturamento_mensal
+            FROM usuarios 
+            WHERE status = 'pago' AND plano_ativo = true
+            """
+            resultado_atual = self.db.fetch_one(query_faturamento_atual, [self.valor_mensal])
+            
+            # Histórico de pagamentos
+            query_historico = """
+            SELECT 
+                COUNT(*) as total_pagamentos,
+                SUM(valor) as total_arrecadado,
+                DATE_PART('month', data_pagamento) as mes,
+                DATE_PART('year', data_pagamento) as ano
+            FROM pagamentos 
+            WHERE status = 'aprovado'
+            GROUP BY DATE_PART('year', data_pagamento), DATE_PART('month', data_pagamento)
+            ORDER BY ano DESC, mes DESC
+            LIMIT 12
+            """
+            historico = self.db.fetch_all(query_historico)
+            
+            # Usuários em teste que podem converter
+            query_conversao = """
+            SELECT COUNT(*) as usuarios_teste_ativo
+            FROM usuarios 
+            WHERE status = 'teste_gratuito' AND plano_ativo = true
+            """
+            conversao = self.db.fetch_one(query_conversao)
+            
+            usuarios_ativos = resultado_atual['usuarios_ativos'] if resultado_atual else 0
+            faturamento_mensal = resultado_atual['faturamento_mensal'] if resultado_atual else 0
+            usuarios_teste = conversao['usuarios_teste_ativo'] if conversao else 0
+            
+            # Projeções
+            projecao_conversao = usuarios_teste * self.valor_mensal * 0.3  # 30% de taxa de conversão
+            
+            return {
+                'usuarios_ativos': usuarios_ativos,
+                'faturamento_mensal': float(faturamento_mensal) if faturamento_mensal else 0.0,
+                'usuarios_teste': usuarios_teste,
+                'projecao_conversao': float(projecao_conversao),
+                'historico': historico or [],
+                'potencial_crescimento': float((usuarios_ativos + usuarios_teste) * self.valor_mensal)
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro ao obter estatísticas de faturamento: {e}")
+            return {
+                'usuarios_ativos': 0,
+                'faturamento_mensal': 0.0,
+                'usuarios_teste': 0,
+                'projecao_conversao': 0.0,
+                'historico': [],
+                'potencial_crescimento': 0.0
+            }
+    
+    def listar_todos_usuarios(self, limit=50):
+        """Lista todos os usuários do sistema"""
+        try:
+            query = """
+            SELECT 
+                chat_id, nome, email, telefone, status, plano_ativo, 
+                proximo_vencimento, data_cadastro
+            FROM usuarios 
+            ORDER BY data_cadastro DESC
+            LIMIT %s
+            """
+            usuarios = self.db.fetch_all(query, [limit])
+            return usuarios or []
+            
+        except Exception as e:
+            logger.error(f"Erro ao listar todos os usuários: {e}")
+            return []

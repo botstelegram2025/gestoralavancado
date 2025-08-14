@@ -38,12 +38,15 @@ class MercadoPagoIntegration:
             agora = datetime.now(self.timezone_br)
             expiracao = agora.replace(hour=23, minute=59, second=59)  # Expira no final do dia
             
+            # Formato correto para o Mercado Pago: yyyy-MM-dd'T'HH:mm:ssz
+            expiracao_formatada = expiracao.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + expiracao.strftime('%z')
+            
             data = {
                 'transaction_amount': float(valor),
                 'description': descricao,
                 'payment_method_id': 'pix',
                 'external_reference': f'user_{chat_id}_{int(agora.timestamp())}',
-                'date_of_expiration': expiracao.isoformat(),
+                'date_of_expiration': expiracao_formatada,
                 'payer': {
                     'email': email_usuario or f'user{chat_id}@sistema.com',
                     'identification': {
